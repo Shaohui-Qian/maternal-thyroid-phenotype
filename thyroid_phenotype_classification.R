@@ -1,10 +1,9 @@
-# ==============================================================================
-# 核心流程：
-#   1. 多源数据表关联合并
-#   2. TSH/FT4/TPOAb 按孕期分层判定
-#   3. 基础单病编码 + 单人多条记录聚合 + 0编码优先级过滤
-#   4. 共病标准化重编码（结节/癌优先、两病专属码、三病归8、四病归9）
-#   5. 结果导出 + 异常病例质控核查
+#核心流程：
+#1. 多源数据表关联合并
+#2. TSH/FT4/TPOAb 按孕期分层判定
+#3. 基础单病编码 + 单人多条记录聚合 + 0编码优先级过滤
+#4. 共病标准化重编码（结节/癌优先、两病专属码、三病归8、四病归9）
+#5. 结果导出 + 异常病例质控核查
 library(tidyverse)
 library(readxl)
 library(writexl)
@@ -16,7 +15,7 @@ ft4_cutoff <- list(
   postpartum = list(lower = 10,    upper = 31)     # 产后
 )
 
-# TSH 不同孕期参考区间
+#TSH不同孕期参考区间
 tsh_cutoff <- list(
   early      = list(lower = 0.03, upper = 4.51),
   mid        = list(lower = 0.05, upper = 4.50),
@@ -24,11 +23,11 @@ tsh_cutoff <- list(
   postpartum = list(lower = 0.3,  upper = 4.2)
 )
 
-# TPOAb 阳性阈值
+#TPOAb阳性阈值
 tpoab_threshold <- 60
 
 
-#' FT4 按孕期分层判定
+#FT4 按孕期分层判定
 classify_ft4 <- function(gestation_stage, ft4_value) {
   case_when(
     gestation_stage == "孕早" & ft4_value < ft4_cutoff$early$lower      ~ "降低",
@@ -52,7 +51,7 @@ classify_ft4 <- function(gestation_stage, ft4_value) {
   )
 }
 
-#' TSH 按孕期分层判定
+#TSH 按孕期分层判定
 classify_tsh <- function(gestation_stage, tsh_value) {
   case_when(
     gestation_stage == "孕早" & tsh_value < tsh_cutoff$early$lower      ~ "降低",
@@ -79,11 +78,10 @@ classify_tsh <- function(gestation_stage, tsh_value) {
   )
 }
 
-#' 0 编码优先级过滤（良性编码不参与疾病共病统计）
-#'
-#' 规则：
-#'   - 全部为 0X 良性编码 → 有 00 取 00，否则取第一个
-#'   - 混杂 0X 和真实疾病编码 → 剔除全部 0 开头编码，只保留疾病编码
+#0 编码优先级过滤（良性编码不参与疾病共病统计）
+#规则：
+#全部为0X良性编码，则有00取00，否则取第一个
+#混杂0X和真实疾病编码，则剔除全部0开头编码，只保留疾病编码
 filter_zero_code <- function(code_str) {
   if (is.na(code_str) || code_str == "") return(code_str)
   
@@ -99,13 +97,13 @@ filter_zero_code <- function(code_str) {
   return(codes[1])
 }
 
-#' 共病标准化重编码（表三核心规则）
-#' 规则优先级从高到低：
-#'   1. 含结节(6)/癌(7) → 优先归入 6 组或 7 组，分配专属共病码
-#'   2. 两病组合 → 分配固定专属编码
-#'   3. 三种疾病 → 统一归 8 组
-#'   4. 四种及以上 → 统一归 9 组
-#'   5. 单一疾病 → 直接返回原编码
+#共病标准化重编码（表三核心规则）
+#规则优先级从高到低：
+#1. 含结节(6)/癌(7)，优先归入6组或7组，分配专属共病码
+#2. 两病组合，分配固定专属编码
+#3. 三种疾病，统一归8组
+#4. 四种及以上，统一归9组
+#5. 单一疾病，直接返回原编码
 map_comorbidity_code <- function(code_str) {
   if (is.na(code_str) || code_str == "分类不明") return(code_str)
   
@@ -114,7 +112,7 @@ map_comorbidity_code <- function(code_str) {
   n_disease <- length(categories)
   cat_key <- paste(categories, collapse = "&")
   
-  # ---------- 优先级1：含甲状腺结节(6) → 优先归 6 组 ----------
+  #优先级1：含甲状腺结节(6)，优先归 6 组
   if ("6" %in% categories) {
     nodule_map <- list(
       "1&6"       = "61",   # 桥本 + 结节
@@ -135,7 +133,7 @@ map_comorbidity_code <- function(code_str) {
     return("60")
   }
   
-  # ---------- 优先级2：含甲状腺癌(7) → 优先归 7 组 ----------
+  #，优先级2：含甲状腺癌(7)，优先归 7 组
   if ("7" %in% categories) {
     cancer_map <- list(
       "1&7"       = "71",   # 桥本 + 癌
@@ -155,7 +153,7 @@ map_comorbidity_code <- function(code_str) {
     return("70")
   }
   
-  # ---------- 优先级3：两病组合 → 专属固定编码 ----------
+  #优先级3：两病组合，其他固定编码
   pair_map <- list(
     "1&2" = "13",   # 桥本 + 甲减
     "1&3" = "14",   # 桥本 + 甲状腺毒症
@@ -171,7 +169,7 @@ map_comorbidity_code <- function(code_str) {
     return(pair_map[[cat_key]])
   }
   
-  # ---------- 优先级4：三种疾病 → 统一归 8 组 ----------
+  #优先级4：三种疾病，统一归 8 组
   if (n_disease == 3) {
     triple_map <- list(
       "1&2&3" = "80",   # 桥本 + 甲减 + 毒症
@@ -186,7 +184,7 @@ map_comorbidity_code <- function(code_str) {
     return("80")
   }
   
-  # ---------- 优先级5：四种及以上 → 统一归 9 组 ----------
+  #优先级5：四种及以上，统一归 9 组
   if (n_disease >= 4) {
     quadruple_map <- list(
       "1&2&3&5"   = "90",   # 桥本+甲减+毒症+低甲素
@@ -202,11 +200,11 @@ map_comorbidity_code <- function(code_str) {
     return("90")
   }
   
-  # ---------- 单一疾病 → 直接返回 ----------
+  #单一疾病，直接返回
   return(codes[1])
 }
 
-#' 根据精细编码提取疾病大类（首数字）
+#根据精细编码提取疾病大类（首数字）
 extract_disease_category <- function(code_str) {
   if (is.na(code_str) || code_str == "") return(code_str)
   if (code_str == "分类不明") return("分类不明")
@@ -215,19 +213,19 @@ extract_disease_category <- function(code_str) {
   categories <- unique(substr(codes, 1, 1))
   paste(categories, collapse = "&")
 }
-# 步骤1：数据读取与合并
-# 读取原始数据表
+#步骤1：数据读取与合并
+#读取原始数据表
 df_sample_id <- read_xlsx("0_标准样本ID.xlsx")
 df_diagnosis <- read_xlsx("6_诊断记录.xlsx")
 df_lab_other <- read_xlsx("4_检验-其他.xlsx")
-# 诊断表 + 检验表关联合并（同一人允许多条检测记录）
+#诊断表 + 检验表关联合并（同一人允许多条检测记录）
 df_raw <- left_join(
   df_diagnosis,
   df_lab_other,
   by = "NIPTID",
   relationship = "many-to-many"
 )
-# 步骤2：实验室指标按孕期分层判定
+#步骤2：实验室指标按孕期分层判定
 df_stratified <- df_raw %>%
   mutate(
     TPOAb_group = case_when(
@@ -240,11 +238,11 @@ df_stratified <- df_raw %>%
     TSH_group = classify_tsh(`分期.x`, `促甲状腺激素TSH`)
   )
 
-# 步骤3：基础单病编码
+#步骤3：基础单病编码
 df_basic_coded <- df_stratified %>%
   mutate(
     disease_code = case_when(
-      # ---- 0 组：非甲功异常 ----
+      #0组：非甲功异常
       TSH_group == "正常" & FT4_group == "正常" & TPOAb_group == "正常" &
         (is.na(记录内容) | !str_detect(记录内容, "甲|桥本|甲状腺|Graves")) ~ "00",
       
@@ -257,52 +255,52 @@ df_basic_coded <- df_stratified %>%
       ((TSH_group == "缺失" | FT4_group == "缺失") & TPOAb_group == "缺失") &
         (is.na(记录内容) | !str_detect(记录内容, "甲|Graves")) ~ "09",
       
-      # ---- 1 组：桥本氏甲状腺炎 ----
+      #1组：桥本氏甲状腺炎
       TPOAb_group == "偏高" & str_detect(记录内容, "桥本") ~ "10",
       TPOAb_group == "偏高" & (is.na(记录内容) | !str_detect(记录内容, "桥本")) ~ "11",
       TPOAb_group %in% c("正常", "缺失") & str_detect(记录内容, "桥本") ~ "12",
       
-      # ---- 2 组：甲状腺功能减退 ----
+      #2组：甲状腺功能减退
       TSH_group == "偏高" & FT4_group == "降低" & str_detect(记录内容, "甲状腺功能低下|甲减") ~ "20",
       TSH_group == "偏高" & FT4_group == "降低" & (is.na(记录内容) | !str_detect(记录内容, "甲状腺功能低下|甲减")) ~ "21",
       (TSH_group == "缺失" | FT4_group == "缺失") & str_detect(记录内容, "甲状腺功能低下|甲减") ~ "22",
       
-      # ---- 2 组：亚临床甲减 ----
+      #2组：亚临床甲减
       TSH_group == "偏高" & FT4_group == "正常" & str_detect(记录内容, "亚临床甲减|亚临床甲状腺功能减退") ~ "23",
       TSH_group == "偏高" & FT4_group == "正常" & (is.na(记录内容) | !str_detect(记录内容, "亚临床甲减|亚临床甲状腺功能减退")) ~ "24",
       (TSH_group == "缺失" | FT4_group == "缺失") & str_detect(记录内容, "亚临床甲减|亚临床甲状腺功能减退") ~ "25",
       
-      # ---- 3 组：妊娠期甲状腺毒症 ----
+      #3组：妊娠期甲状腺毒症
       TSH_group == "降低" & FT4_group == "正常" & str_detect(记录内容, "甲状腺毒症") ~ "30",
       TSH_group == "降低" & FT4_group == "正常" & (is.na(记录内容) | !str_detect(记录内容, "甲状腺毒症")) ~ "31",
       (TSH_group == "缺失" | FT4_group == "缺失") & str_detect(记录内容, "甲状腺毒症") ~ "32",
       
-      # ---- 4 组：甲状腺功能亢进 ----
+      #4组：甲状腺功能亢进
       TSH_group == "降低" & FT4_group == "偏高" & str_detect(记录内容, "甲状腺功能亢进|甲亢|Graves病") ~ "40",
       TSH_group == "降低" & FT4_group == "偏高" & (is.na(记录内容) | !str_detect(记录内容, "甲状腺功能亢进|甲亢|Graves病")) ~ "41",
       (TSH_group == "缺失" | FT4_group == "缺失") & str_detect(记录内容, "甲状腺功能亢进|甲亢|Graves病") ~ "42",
       
-      # ---- 5 组：低甲状腺素血症 ----
+      #5组：低甲状腺素血症
       FT4_group == "降低" & TSH_group == "正常" & str_detect(记录内容, "低甲状腺素血症") ~ "50",
       FT4_group == "降低" & TSH_group == "正常" & (is.na(记录内容) | !str_detect(记录内容, "低甲状腺素血症")) ~ "51",
       (FT4_group %in% c("正常", "缺失")) & (TSH_group %in% c("正常", "缺失")) & str_detect(记录内容, "低甲状腺素血症") ~ "52",
       
-      # ---- 6 组：甲状腺结节 ----
+      #6组：甲状腺结节
       str_detect(记录内容, "甲状腺结节") ~ "60",
       
-      # ---- 7 组：甲状腺癌 ----
+      #7组：甲状腺癌
       str_detect(记录内容, "甲状腺癌") ~ "70",
       
-      # ---- 其他 ----
+      #其他
       TRUE ~ "分类不明"
     )
   )
 
-# 步骤4：按 NIPTID 聚合单人多条记录
+#步骤4：按 NIPTID 聚合单人多条记录
 df_subject <- df_basic_coded %>%
   group_by(NIPTID) %>%
   summarise(
-    # 多条记录编码合并：相同保留一个，不同用 & 连接
+    #多条记录编码合并：相同保留一个，不同用 & 连接
     code_concat = ifelse(
       n_distinct(disease_code) == 1,
       first(disease_code),
@@ -311,7 +309,7 @@ df_subject <- df_basic_coded %>%
     .groups = "drop"
   ) %>%
   mutate(
-    # 清理拼接中的「分类不明」无效标签
+    #清理拼接中的“分类不明”无效标签
     code_concat = map_chr(code_concat, function(x) {
       if (x == "分类不明") return(x)
       if (!str_detect(x, "&")) return(x)
@@ -321,35 +319,35 @@ df_subject <- df_basic_coded %>%
       paste(parts, collapse = "&")
     }),
     
-    # 过滤 0 开头良性编码
+    #过滤0开头良性编码
     code_filtered = sapply(code_concat, filter_zero_code, USE.NAMES = FALSE),
     
-    # 共病标准化重编码（表三核心）
+    #共病标准化重编码
     disease_code = sapply(code_filtered, map_comorbidity_code, USE.NAMES = FALSE),
     
-    # 提取疾病大类
+    #提取疾病大类
     disease_category = sapply(disease_code, extract_disease_category, USE.NAMES = FALSE)
   )
 
-# 步骤5：关联样本信息 & 结果导出
+#步骤5：关联样本信息 & 结果导出
 df_final <- left_join(df_subject, df_sample_id, by = "NIPTID")
 df_export <- df_final %>%
   select(NIPTID, disease_code, disease_category, everything())
 write_xlsx(df_export, "甲状腺疾病分类_3.xlsx")
 
-# 步骤6：质控核查
-# 1. 分类不明病例核查
+#步骤6：质控核查
+#1. 分类不明病例核查
 case_unknown <- df_export %>% filter(disease_category == "分类不明")
 case_unknown_detail <- inner_join(case_unknown, df_basic_coded, by = "NIPTID")
-# 2. 诊断文本同时含「甲亢+甲减」冲突病例核查
+#2. 诊断文本同时含“甲亢+甲减”冲突病例核查
 case_conflict <- df_basic_coded %>%
   filter(str_detect(记录内容, "亢") & str_detect(记录内容, "减"))
-# 3. 重点亚组提取
+#3. 重点亚组提取
 case_hashimoto_hypo  <- df_export %>% filter(disease_code == "13")  # 桥本合并甲减
 case_hashimoto_hyper <- df_export %>% filter(disease_code == "15")  # 桥本合并甲亢
 case_nodule          <- df_export %>% filter(disease_category == "6")  # 结节组
-# 4. 编码分布统计
-cat("===== 精细编码分布 =====\n")
+#4. 编码分布统计
+cat("疾病小类分布")
 print(table(df_export$disease_code))
-cat("\n===== 疾病大类分布 =====\n")
+cat("疾病大类分布")
 print(table(df_export$disease_category))
